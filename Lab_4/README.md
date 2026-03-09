@@ -6,21 +6,82 @@ The staging environment requires a stateful logging application that must retain
 ## Lab Description
 The student will create a Deployment with `emptyDir` storage, test its behavior, and then perform a blue-green deployment using labels and services. They will troubleshoot a storage-related failure.
 
+## Prerequisites
+- Minikube or Kubernetes cluster running
+- `staging` namespace created (`kubectl create namespace staging`)
+
+## Container Images and Details
+
+| Component | Image | Purpose |
+|-----------|-------|---------|
+| logger v1 | `busybox:latest` | Writes timestamp to file every 10 seconds |
+| logger v2 | `busybox:latest` | Writes timestamp + hostname to file every 10 seconds |
+
 ## Tasks to Implement
 
-1. In the `staging` namespace, create a Deployment named `logger` with 1 replica. The container should write a timestamp to `/log/output.txt` every 10 seconds. Use an `emptyDir` volume mounted at `/log`.
+### Part 1: Initial Logger Deployment with emptyDir
 
-2. Simulate a container crash (kill the main process). This reinforces Pod Lifecycle and storage behavior.
+Create the initial logger Deployment in the `staging` namespace:
 
-3. Now delete the pod manually. When the Deployment recreates it, check if the old logs are present. Explain the behavior.
+- **Name:** `logger`
+- **Replicas:** 1
+- **Container image:** `busybox:latest`
+- **Container command:**
+  ```bash
+  /bin/sh -c "while true; do date >> /log/output.txt; sleep 10; done"
+  ```
+- **Add label:** `app: logger`, `version: v1`
+- **Add an `emptyDir` volume mounted at `/log`**
 
-4. **Blue-Green Deployment:** 
-   - Create a new service named `logger-service` that selects the `logger` Deployment (using a label like `version: v1`).
-   - Prepare a new Deployment (`logger-v2`) in the same namespace with a different label (`version: v2`) and the same application but with an additional feature (e.g., it also writes the hostname).
+### Part 2: Test Storage Behavior
 
-5. Perform a blue-green switch by updating the `logger-service` selector to point to `version: v2`. Verify traffic now goes to the new pods.
+1. **Simulate a container crash:**
+   - Exec into the pod and kill the main process (PID 1)
+   - Observe what happens to the pod
+   - Check if the log file persists after container restart
 
-6. **Troubleshooting:** During the switch, one of the new `logger-v2` pods enters `CrashLoopBackOff`. Use troubleshooting skills to diagnose and fix it (e.g., the container tries to write to a different path that doesn't have the volume mount).
+2. **Delete the pod manually:**
+   - Delete the specific pod running the logger
+   - Wait for the Deployment to recreate it
+   - Check if the old logs are present in the new pod
+
+### Part 3: Blue-Green Deployment Setup
+
+1. **Create a service for the logger:**
+   - **Name:** `logger-service`
+   - **Type:** ClusterIP
+   - **Port:** 80 (target port doesn't matter since this is a logging app, but we need a service for the exercise)
+   - **Selector:** `version: v1`
+
+2. **Prepare the new version (v2) Deployment:**
+   - **Name:** `logger-v2`
+   - **Replicas:** 2 (to ensure at least one works during troubleshooting)
+   - **Container image:** `busybox:latest`
+   - **Container command (includes hostname):**
+     ```bash
+     /bin/sh -c "while true; do echo \"\$(date) - Host: \$(hostname)\" >> /log/output.txt; sleep 10; done"
+     ```
+    - **Add label:** `app: logger`, `version: v2`
+    - **INTENTIONAL BUG:** Mount the `emptyDir` volume at `/var/log/app` instead of `/log`
+
+### Part 4: Blue-Green Switch and Troubleshooting
+
+1. **Perform the blue-green switch:**
+   - Update the `logger-service` selector to `version: v2`
+   - Observe that one of the `logger-v2` pods enters `CrashLoopBackOff`
+
+2. **Troubleshoot and fix the issue:**
+   - Diagnose why the pod is crashing
+   - Fix the volume mount path in the `logger-v2` Deployment
+   - Verify both v2 pods are running successfully
+   - Confirm the service is now sending traffic to v2 pods
+
+### Part 5: Verification
+
+- **Verify the fix:**
+  - Check logs from a v2 pod to confirm timestamps and hostnames are being written
+  - Exec into a v2 pod and verify the log file exists and contains data
+  - Test service discovery by running a temporary busybox pod and curling the service (optional)
 
 ---
 
